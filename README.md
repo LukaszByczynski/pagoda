@@ -3,7 +3,9 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/mikestefanello/pagoda)](https://goreportcard.com/report/github.com/mikestefanello/pagoda)
 [![Test](https://github.com/mikestefanello/pagoda/actions/workflows/test.yml/badge.svg)](https://github.com/mikestefanello/pagoda/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mikestefanello/pagoda.svg)](https://pkg.go.dev/github.com/mikestefanello/pagoda)
 [![GoT](https://img.shields.io/badge/Made%20with-Go-1f425f.svg)](https://go.dev)
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 
 <p align="center"><img alt="Logo" src="https://user-images.githubusercontent.com/552328/147838644-0efac538-a97e-4a46-86a0-41e3abdf9f20.png" height="200px"/></p>
 
@@ -40,6 +42,7 @@
   * [Registration](#registration)
   * [Authenticated user](#authenticated-user)
     * [Middleware](#middleware)
+  * [Email verification](#email-verification)
 * [Routes](#routes)
   * [Custom middleware](#custom-middleware)
   * [Controller / Dependencies](#controller--dependencies)
@@ -69,11 +72,21 @@
   * [HTMX support](#htmx-support)
   * [Rendering the page](#rendering-the-page)
 * [Template renderer](#template-renderer)
+  * [Custom functions](#custom-functions)
   * [Caching](#caching)
   * [Hot-reload for development](#hot-reload-for-development)
   * [File configuration](#file-configuration)
 * [Funcmap](#funcmap)
 * [Cache](#cache)
+  * [Set data](#set-data)
+  * [Get data](#get-data)
+  * [Flush data](#flush-data)
+  * [Flush tags](#flush-tags)
+* [Tasks](#tasks)
+  * [Queues](#queues)
+  * [Scheduled tasks](#scheduled-tasks)
+  * [Worker](#worker)
+  * [Monitoring](#monitoring)
 * [Static files](#static-files)
   * [Cache control headers](#cache-control-headers)
   * [Cache-buster](#cache-buster)
@@ -88,7 +101,7 @@
 ### Overview
 
 _Pagoda_ is not a framework but rather a base starter-kit for rapid, easy full-stack web development in Go, aiming to provide much of the functionality you would expect from a complete web framework as well as establishing patterns, procedures and structure for your web application.
- 
+
 Built on a solid [foundation](#foundation) of well-established frameworks and modules, _Pagoda_ aims to be a starting point for any web application with the benefit over a mega-framework in that you have full control over all of the code, the ability to easily swap any frameworks or modules in or out, no strict patterns or interfaces to follow, and no fear of lock-in.
 
 While separate JavaScript frontends have surged in popularity, many prefer the reliability, simplicity and speed of a full-stack approach with server-side rendered HTML. Even the popular JS frameworks all have SSR options. This project aims to highlight that _Go_ templates can be powerful and easy to work with, and interesting [frontend](#frontend) libraries can provide the same modern functionality and behavior without having to write any JS at all.
@@ -117,7 +130,7 @@ Go server-side rendered HTML combined with the projects below enable you to crea
 
 ### Screenshots
 
-#### Inline validation
+#### Inline form validation
 
 <img src="https://user-images.githubusercontent.com/552328/147838632-570a3116-1e74-428f-8bfc-523ed309ef06.png" alt="Inline validation"/>
 
@@ -138,12 +151,18 @@ Ensure the following are installed on your system:
  - [Go](https://go.dev/)
  - [Docker](https://www.docker.com/)
  - [Docker Compose](https://docs.docker.com/compose/install/)
- - [psql](https://www.postgresql.org/docs/13/app-psql.html) _(optional)_
- - [redis-cli](https://redis.io/topics/rediscli) _(optional)_
 
 ### Start the application
 
-After checking out the repository, from within the root, start the Docker containers for the database and cache by executing `make up`.
+After checking out the repository, from within the root, start the Docker containers for the database and cache by executing `make up`:
+
+```
+git clone git@github.com:mikestefanello/pagoda.git
+cd pagoda
+make up
+```
+
+Since this repository is a _template_ and not a Go _library_, you **do not** use `go get`.
 
 Once that completes, you can start the application by executing `make run`. By default, you should be able to access the application in your browser at `localhost:8000`.
 
@@ -159,11 +178,12 @@ The following _make_ commands are available to make it easy to connect to the da
 
 - `make db`: Connects to the primary database
 - `make db-test`: Connects to the test database
-- `make cache`: Connects to the cache
+- `make cache`: Connects to the primary cache
+- `make cache-test`: Connects to the test cache
 
 ## Service container
 
-The container is located at `services/container.go` and is meant to house all of your application's services and/or dependencies. It is easily extensible and can be created and initialized in a single call. The services currently included in the container are:
+The container is located at `pkg/services/container.go` and is meant to house all of your application's services and/or dependencies. It is easily extensible and can be created and initialized in a single call. The services currently included in the container are:
 
 - Configuration
 - Cache
@@ -174,6 +194,7 @@ The container is located at `services/container.go` and is meant to house all of
 - Authentication
 - Mail
 - Template renderer
+- Tasks
 
 A new container can be created and initialized via `services.NewContainer()`. It can be later shutdown via `Shutdown()`.
 
@@ -188,19 +209,22 @@ It is common that your tests will require access to dependencies, like the datab
 
 ## Configuration
 
-The `config` package provides a flexible, extensible way to store all configuration for the application. Configuration is added to the `Container` as a _Service_, making it accessible across most of the application. 
+The `config` package provides a flexible, extensible way to store all configuration for the application. Configuration is added to the `Container` as a _Service_, making it accessible across most of the application.
 
-Be sure to review and adjust all of the default configuration values provided.
+Be sure to review and adjust all of the default configuration values provided in `config/config.yaml`.
 
 ### Environment overrides
 
-Leveraging the functionality of [envdecode](https://github.com/joeshaw/envdecode), all configuration values can be overridden by environment variables. Here is an example of what a configuration value looks like, each of which is a field on a struct:
+Leveraging the functionality of [viper](https://github.com/spf13/viper) to manage configuration, all configuration values can be overridden by environment variables. The name of the variable is determined by the set prefix and the name of the configuration field in `config/config.yaml`.
 
-```go
-Port  uint16  `env:"HTTP_PORT,default=8000"`
+In `config/config.go`, the prefix is set as `pagoda` via `viper.SetEnvPrefix("pagoda")`. Nested fields require an underscore between levels. For example:
+
+```yaml
+cache:
+  port: 1234
 ```
 
-The value for this field will be set to `8000`, the default, unless the `HTTP_PORT` environment variable is set, in which case the value of the variable will be used. This allows you to easily override configuration values per-environment.
+can be overridden by setting an environment variable with the name `PAGODA_CACHE_PORT`.
 
 ### Environments
 
@@ -210,20 +234,21 @@ A helper function (`config.SwitchEnvironment`) is available to make switching th
 
 ```go
 func TestMain(m *testing.M) {
-	// Set the environment to test
-	config.SwitchEnvironment(config.EnvTest)
+    // Set the environment to test
+    config.SwitchEnvironment(config.EnvTest)
 
-	// Start a new container
-	c = services.NewContainer()
-	defer func() {
-		if err := c.Shutdown(); err != nil {
-			c.Web.Logger.Fatal(err)
-		}
-	}()
+    // Start a new container
+    c = services.NewContainer()
 
-	// Run tests
-	exitVal := m.Run()
-	os.Exit(exitVal)
+    // Run tests
+    exitVal := m.Run()
+
+    // Shutdown the container
+    if err := c.Shutdown(); err != nil {
+        panic(err)
+    }
+
+    os.Exit(exitVal)
 }
 ```
 
@@ -245,7 +270,7 @@ When a `Container` is created, if the [environment](#environments) is set to `co
 
 ## ORM
 
-As previously mentioned, [Ent](https://entgo.io/) is the supplied ORM. It can swapped out, but I highly recommend it. I don't think there is anything comparable for Go, at the current time. If you're not familiar with Ent, take a look through their top-notch [documentation](https://entgo.io/docs/getting-started). 
+As previously mentioned, [Ent](https://entgo.io/) is the supplied ORM. It can swapped out, but I highly recommend it. I don't think there is anything comparable for Go, at the current time. If you're not familiar with Ent, take a look through their top-notch [documentation](https://entgo.io/docs/getting-started).
 
 An Ent client is included in the `Container` to provide easy access to the ORM throughout the application.
 
@@ -271,16 +296,17 @@ The generated code is extremely flexible and impressive. An example to highlight
 ```go
 entity, err := c.ORM.PasswordToken.
     Query().
+    Where(passwordtoken.ID(tokenID)).
     Where(passwordtoken.HasUserWith(user.ID(userID))).
     Where(passwordtoken.CreatedAtGTE(expiration)).
-    All(ctx.Request().Context())
+    Only(ctx.Request().Context())
 ```
 
-This executes a database query to return all _password token_ entities that belong to a user with a given ID and have a _created at_ timestamp field that is greater than or equal to a given time.
+This executes a database query to return the _password token_ entity with a given ID that belong to a user with a given ID and has a _created at_ timestamp field that is greater than or equal to a given time.
 
 ## Sessions
 
-Sessions are provided and handled via [Gorilla sessions](https://github.com/gorilla/sessions) and configured as middleware in the router located at `routes/router.go`. Session data is currently stored in cookies but there are many [options](https://github.com/gorilla/sessions#store-implementations) available if you wish to use something else.
+Sessions are provided and handled via [Gorilla sessions](https://github.com/gorilla/sessions) and configured as middleware in the router located at `pkg/routes/router.go`. Session data is currently stored in cookies but there are many [options](https://github.com/gorilla/sessions#store-implementations) available if you wish to use something else.
 
 Here's a simple example of loading data from a session and saving new values:
 
@@ -320,11 +346,11 @@ Users can reset their password in a secure manner by issuing a new password toke
 
 Tokens have a configurable expiration. By default, they expire within 1 hour. This can be controlled in the `config` package. The expiration of the token is not stored in the database, but rather is used only when tokens are loaded for potential usage. This allows you to change the expiration duration and affect existing tokens.
 
-Since the actual tokens are not stored in the database, the reset URL must contain the user's ID. Using that, `GetValidPasswordToken()` will load all non-expired _password token_ entities belonging to the user, and use `bcrypt` to determine if the token in the URL matches any of the stored hashes.
+Since the actual tokens are not stored in the database, the reset URL must contain the user and password token ID. Using that, `GetValidPasswordToken()` will load a matching, non-expired _password token_ entity belonging to the user, and use `bcrypt` to determine if the token in the URL matches stored hash of the password token entity.
 
 Once a user claims a valid password token, all tokens for that user should be deleted using `DeletePasswordTokens()`.
 
-Routes are provided to request a password reset email at `user/password` and to reset your password at `user/password/reset/token/:uid/:password_token`.
+Routes are provided to request a password reset email at `user/password` and to reset your password at `user/password/reset/token/:user/:password_token/:token`.
 
 ### Registration
 
@@ -342,9 +368,23 @@ Registered for all routes is middleware that will load the currently logged in u
 
 If you wish to require either authentication or non-authentication for a given route, you can use either `middleware.RequireAuthentication()` or `middleware.RequireNoAuthentication()`.
 
+### Email verification
+
+Most web applications require the user to verify their email address (or other form of contact information). The `User` entity has a field `Verified` to indicate if they have verified themself. When a user successfully registers, an email is sent to them containing a link with a token that will verify their account when visited. This route is currently accessible at `/email/verify/:token` and handled by `routes/VerifyEmail`.
+
+There is currently no enforcement that a `User` must be verified in order to access the application. If that is something you desire, it will have to be added in yourself. It was not included because you may want partial access of certain features until the user verifies; or no access at all.
+
+Verification tokens are [JSON Web Tokens](https://jwt.io/) generated and processed by the [jwt](https://github.com/golang-jwt/jwt) module. The tokens are _signed_ using the encryption key stored in [configuration](#configuration) (`Config.App.EncryptionKey`). **It is imperative** that you override this value from the default in any live environments otherwise the data can be comprimised. JWT was chosen because they are secure tokens that do not have to be stored in the database, since the tokens contain all of the data required, including built-in expirations. These were not chosen for password reset tokens because JWT cannot be withdrawn once they are issued which poses a security risk. Since these tokens do not grant access to an account, the ability to withdraw the tokens is not needed.
+
+By default, verification tokens expire 12 hours after they are issued. This can be changed in configuration at `Config.App.EmailVerificationTokenExpiration`. There is currently not a route or form provided to request a new link.
+
+Be sure to review the [email](#email) section since actual email sending is not fully implemented.
+
+To generate a new verification token, the `AuthClient` has a method `GenerateEmailVerificationToken()` which creates a token for a given email address. To verify the token, pass it in to `ValidateEmailVerificationToken()` which will return the email address associated with the token and an error if the token is invalid.
+
 ## Routes
 
-The router functionality is provided by [Echo](https://echo.labstack.com/guide/routing/) and constructed within via the `BuildRouter()` function inside `routes/router.go`. Since the _Echo_ instance is a _Service_ on the `Container` which is passed in to `BuildRouter()`, middleware and routes can be added directly to it.
+The router functionality is provided by [Echo](https://echo.labstack.com/guide/routing/) and constructed within via the `BuildRouter()` function inside `pkg/routes/router.go`. Since the _Echo_ instance is a _Service_ on the `Container` which is passed in to `BuildRouter()`, middleware and routes can be added directly to it.
 
 ### Custom middleware
 
@@ -370,19 +410,19 @@ These patterns are not required, but were designed to make development as easy a
 To declare a new route that will have methods to handle a GET and POST request, for example, start with a new _struct_ type, that embeds the `Controller`:
 
 ```go
-type Home struct {
+type home struct {
     controller.Controller
 }
 
-func (c *Home) Get(ctx echo.Context) error {}
+func (c *home) Get(ctx echo.Context) error {}
 
-func (c *Home) Post(ctx echo.Context) error {}
+func (c *home) Post(ctx echo.Context) error {}
 ```
 
 Then create the route and add to the router:
 
 ```go
-home := Home{Controller: controller.NewController(c)}
+home := home{Controller: controller.NewController(c)}
 g.GET("/", home.Get).Name = "home"
 g.POST("/", home.Post).Name = "home.post"
 ```
@@ -395,13 +435,13 @@ Your route will now have all methods available on the `Controller` as well as ac
 
 Routes can return errors to indicate that something wrong happened. Ideally, the error is of type `*echo.HTTPError` to indicate the intended HTTP response code. You can use `return echo.NewHTTPError(http.StatusInternalServerError)`, for example. If an error of a different type is returned, an _Internal Server Error_ is assumed.
 
-The [error handler](https://echo.labstack.com/guide/error-handling/) is set to a provided route `routes/error.go` in the `BuildRouter()` function. That means that if any middleware or route return an error, the request gets routed there. This route conveniently constructs and renders a `Page` which uses the template `templates/pages/error.go`. The status code is passed to the template so you can easily alter the markup depending on the error type.
+The [error handler](https://echo.labstack.com/guide/error-handling/) is set to a provided route `pkg/routes/error.go` in the `BuildRouter()` function. That means that if any middleware or route return an error, the request gets routed there. This route conveniently constructs and renders a `Page` which uses the template `templates/pages/error.go`. The status code is passed to the template so you can easily alter the markup depending on the error type.
 
 ### Testing
 
 Since most of your web application logic will live in your routes, being able to easily test them is important. The following aims to help facilitate that.
 
-The test setup and helpers reside in `routes/router_test.go`.
+The test setup and helpers reside in `pkg/routes/router_test.go`.
 
 Only a brief example of route tests were provided in order to highlight what is available. Adding full tests did not seem logical since these routes will most likely be changed or removed in your project.
 
@@ -411,7 +451,7 @@ When the route tests initialize, a new `Container` is created which provides ful
 
 #### Request / Response helpers
 
-With the test HTTP server setup, test helpers for making HTTP requests and evaluating responses are made available to reduce the amount of code you need to write. See `httpRequest` and `httpResponse` within `routes/router_test.go`.
+With the test HTTP server setup, test helpers for making HTTP requests and evaluating responses are made available to reduce the amount of code you need to write. See `httpRequest` and `httpResponse` within `pkg/routes/router_test.go`.
 
 Here is an example how to easily make a request and evaluate the response:
 
@@ -445,7 +485,7 @@ As previously mentioned, the `Controller` acts as a base for your routes, though
 
 ### Page
 
-The `Page` is the major building block of your `Controller` responses. It is a _struct_ type located at `controller/page.go`. The concept of the `Page` is that it provides a consistent structure for building responses and transmitting data and functionality to the templates.
+The `Page` is the major building block of your `Controller` responses. It is a _struct_ type located at `pkg/controller/page.go`. The concept of the `Page` is that it provides a consistent structure for building responses and transmitting data and functionality to the templates.
 
 All example routes provided construct and _render_ a `Page`. It's recommended that you review both the `Page` and the example routes as they try to illustrate all included functionality.
 
@@ -454,7 +494,7 @@ As you develop your application, the `Page` can be easily extended to include wh
 Initializing a new page is simple:
 
 ```go
-func (c *Home) Get(ctx echo.Context) error {
+func (c *home) Get(ctx echo.Context) error {
     page := controller.NewPage(ctx)
 }
 ```
@@ -500,7 +540,7 @@ To make things easier, a template _component_ is already provided, located at `t
 
 ### Pager
 
-A very basic mechanism is provided to handle and facilitate paging located in `controller/pager.go`. When a `Page` is initialized, so is a `Pager` at `Page.Pager`. If the requested URL contains a `page` query parameter with a numeric value, that will be set as the page number in the pager.
+A very basic mechanism is provided to handle and facilitate paging located in `pkg/controller/pager.go`. When a `Page` is initialized, so is a `Pager` at `Page.Pager`. If the requested URL contains a `page` query parameter with a numeric value, that will be set as the page number in the pager.
 
 During initialization, the _items per page_ amount will be set to the default, controlled via constant, which has a value of 20. It can be overridden by changing `Pager.ItemsPerPage` but should be done before other values are set in order to not provide incorrect calculations.
 
@@ -553,13 +593,7 @@ By default, the cache expiration time will be set according to the configuration
 
 You can optionally specify cache tags for the `Page` by setting a slice of strings on `Page.Cache.Tags`. This provides the ability to build in cache invalidation logic in your application driven by events such as entity operations, for example.
 
-The cache client on the `Container` is currently handled by [gocache](https://github.com/eko/gocache) which makes it easy to perform operations such as tag-invalidation, for example:
-
-```go
-c.Cache.Invalidate(ctx, store.InvalidateOptions{
-    Tags: []string{"my-tag"},
-})
-```
+You can use the [cache client](#cache) on the `Container` to easily [flush cache tags](#flush-tags), if needed.
 
 #### Cache middleware
 
@@ -600,11 +634,11 @@ How the _form_ gets populated with values so that your template can render them 
 
 #### Submission processing
 
-Form submission processing is made extremely simple by leveraging functionality provided by [Echo binding](https://echo.labstack.com/guide/binding/), [validator](https://github.com/go-playground/validator) and the `FormSubmission` struct located in `controller/form.go`.
+Form submission processing is made extremely simple by leveraging functionality provided by [Echo binding](https://echo.labstack.com/guide/binding/), [validator](https://github.com/go-playground/validator) and the `FormSubmission` struct located in `pkg/controller/form.go`.
 
 Using the example form above, these are the steps you would take within the _POST_ callback for your route:
 
-Start by storing a pointer to the form in the conetxt so that your _GET_ callback can access the form values, which will be showed at the end:
+Start by storing a pointer to the form in the context so that your _GET_ callback can access the form values, which will be showed at the end:
 ```go
 var form ContactForm
 ctx.Set(context.FormKey, &form)
@@ -649,7 +683,7 @@ if form := ctx.Get(context.FormKey); form != nil {
 ```
 
 And finally, your template:
-```
+```html
 <input id="email" name="email" type="email" class="input" value="{{.Form.Email}}">
 ```
 
@@ -662,7 +696,7 @@ While [validator](https://github.com/go-playground/validator) is a great package
 To provide the inline validation in your template, there are two things that need to be done.
 
 First, include a status class on the element so it will highlight green or red based on the validation:
-```
+```html
 <input id="email" name="email" type="email" class="input {{.Form.Submission.GetFieldStatusClass "Email"}}" value="{{.Form.Email}}">
 ```
 
@@ -711,7 +745,7 @@ A _component_ template is included to render metatags in `core.gohtml` which can
 
 ### URL and link generation
 
-Generating URLs in the templates is made easy if you follow the [routing patterns](#patterns) and provide names for your routes. Echo provides a `Reverse` function to generate a route URL with a given route name and optional parameters. This function is made accessible to the templates via the `Page` field `ToURL`. 
+Generating URLs in the templates is made easy if you follow the [routing patterns](#patterns) and provide names for your routes. Echo provides a `Reverse` function to generate a route URL with a given route name and optional parameters. This function is made accessible to the templates via the `Page` field `ToURL`.
 
 As an example, if you have route such as:
 ```go
@@ -746,6 +780,7 @@ Many examples of its usage are available in the included examples:
 - All navigation links use [boost](https://htmx.org/docs/#boosting) which dynamically replaces the page content with an AJAX request, providing a SPA-like experience.
 - All forms use either [boost](https://htmx.org/docs/#boosting) or [hx-post](https://htmx.org/docs/#triggers) to submit via AJAX.
 - The mock search autocomplete modal uses [hx-get](https://htmx.org/docs/#targets) to fetch search results from the server via AJAX and update the UI.
+- The mock posts on the homepage/dashboard use [hx-get](https://htmx.org/docs/#targets) to fetch and page posts via AJAX.
 
 All of this can be easily accomplished without writing any JavaScript at all.
 
@@ -757,7 +792,7 @@ If you need to set any HTMX headers in your `Page` response, this can be done by
 
 #### Layout template override
 
-To faciliate easy partial rendering for HTMX requests, the `Page` will automatically change your _Layout_ template to use `htmx.gohtml`, which currently only renders `{{template "content" .}}`. This allows you to use an HTMX request to only update the content portion of the page, rather than the entire HTML.
+To facilitate easy partial rendering for HTMX requests, the `Page` will automatically change your _Layout_ template to use `htmx.gohtml`, which currently only renders `{{template "content" .}}`. This allows you to use an HTMX request to only update the content portion of the page, rather than the entire HTML.
 
 This override only happens if the HTMX request being made is **not a boost** request because **boost** requests replace the entire `body` element so there is no need to do a partial render.
 
@@ -788,7 +823,7 @@ If [CSRF](#csrf) protection is enabled, the token value will automatically be pa
 Once your `Page` is fully built, rendering it via the embedded `Controller` in your _route_ can be done simply by calling `RenderPage()`:
 
 ```go
-func (c *Home) Get(ctx echo.Context) error {
+func (c *home) Get(ctx echo.Context) error {
     page := controller.NewPage(ctx)
     page.Layout = "main"
     page.Name = "home"
@@ -798,37 +833,66 @@ func (c *Home) Get(ctx echo.Context) error {
 
 ## Template renderer
 
-The _template renderer_ is a _Service_ on the `Container` that aims to make template parsing and rendering easy and flexible. It is the mechanism that allows the `Page` to do [automatic template parsing](#automatic-template-parsing). The standard `html/template` is still the engine used behind the scenes. The code can be found in `services/template_renderer.go`.
+The _template renderer_ is a _Service_ on the `Container` that aims to make template parsing and rendering easy and flexible. It is the mechanism that allows the `Page` to do [automatic template parsing](#automatic-template-parsing). The standard `html/template` is still the engine used behind the scenes. The code can be found in `pkg/services/template_renderer.go`.
 
-While there are several methods available, the following is the primary one used:
+Here is an example of a complex rendering that uses multiple template files as well as an entire directory of template files:
 
-`ParseAndExecute(cacheGroup, cacheID, baseName string, files []string, directories []string, data interface{})`
+```go
+buf, err = c.TemplateRenderer.
+    Parse().
+    Group("page").
+    Key("home").
+    Base("main").
+    Files("layouts/main", "pages/home").
+    Directories("components").
+    Execute(data)
+```
+
+This will do the following:
+- [Cache](#caching) the parsed template with a _group_ of `page` and _key_ of `home` so this parse only happens once
+- Set the _base template file_ as `main`
+- Include the templates `templates/layout/main.gohtml` and `templates/pages/home.gohtml`
+- Include all templates located within the directory `templates/components`
+- Include the [funcmap](#funcmap)
+- Execute the parsed template with `data` being passed in to the templates
 
 Using the example from the [page rendering](#rendering-the-page), this is what the `Controller` will execute:
 
 ```go
-buf, err = c.TemplateRenderer.ParseAndExecute(
-    "page",
-    page.Name,
-    page.Layout,
-    []string{
+buf, err = c.Container.TemplateRenderer.
+    Parse().
+    Group("page").
+    Key(page.Name).
+    Base(page.Layout).
+    Files(
         fmt.Sprintf("layouts/%s", page.Layout),
         fmt.Sprintf("pages/%s", page.Name),
-    },
-    []string{"components"},
-    page,
-)
+    ).
+    Directories("components").
+    Execute(page)
 ```
 
-The parameters represent:
- - `cacheGroup`: The _group_ to cache the parsed templates in
- - `cacheID`: The _ID_ of the cache within the _group_
- - `baseName`: The name of the base template, excluding the extension
- - `files`: A list of individual template files to include, excluding the extension and template directory
- - `directories`: A list of directories to include all templates contained
- - `data`: The data object to send to the templates
+If you have a need to _separately_ parse and cache the templates then later execute, you can separate the operations:
 
-All templates will be parsed with the [funcap](#funcmap).
+```go
+_, err := c.TemplateRenderer.
+    Parse().
+    Group("my-group").
+    Key("my-key").
+    Base("auth").
+    Files("layouts/auth", "pages/login").
+    Directories("components").
+    Store()
+```
+
+```go
+tpl, err := c.TemplateRenderer.Load("my-group", "my-key")
+buf, err := tpl.Execute(data)
+```
+
+### Custom functions
+
+All templates will be parsed with the [funcmap](#funcmap) so all of your custom functions as well as the functions provided by [sprig](https://github.com/Masterminds/sprig) will be available.
 
 ### Caching
 
@@ -850,13 +914,219 @@ To include additional custom functions, add to the slice in `GetFuncMap()` and d
 
 ## Cache
 
-As previously mentioned, [Redis](https://redis.io/) was chosen as the cache but it can be easily swapped out for something else. [go-redis](https://github.com/go-redis/redis) is used as the underlying client but the `Container` currently only exposes [gocache](https://github.com/eko/gocache) which was chosen because it makes interfacing with the cache client much easier, and it provides a consistent interface if you were to use a cache backend other than Redis.
+As previously mentioned, [Redis](https://redis.io/) was chosen as the cache but it can be easily swapped out for something else. [go-redis](https://github.com/go-redis/redis) is used as the underlying client but the `Container` contains a custom client wrapper (`CacheClient`) that makes typical cache operations extremely simple. This wrapper does expose the [go-redis]() client however, at `CacheClient.Client`, in case you have a need for it.
 
-The built-in usage of the cache is currently only for optional [page caching](#cached-responses) but it can be used for practically anything.
+The cache functionality within the `CacheClient` is powered by [gocache](https://github.com/eko/gocache) which was chosen because it makes interfacing with the cache service much easier, and it provides a consistent interface if you were to use a cache backend other than Redis.
+
+The built-in usage of the cache is currently only for optional [page caching](#cached-responses) but it can be used for practically anything. See examples below:
+
+Similar to how there is a separate [test database](#separate-test-database) to avoid writing to your primary database when running tests, the cache supports a separate database as well for tests. Within the `config`, the test database number can be specified at `Config.Cache.TestDatabase`. By default, the primary database is `0` and the test database is `1`.
+
+### Set data
+
+**Set data with just a key:**
+
+```go
+err := c.Cache.
+    Set().
+    Key("my-key").
+    Data(myData).
+    Save(ctx)
+```
+
+**Set data within a group:**
+
+```go
+err := c.Cache.
+    Set().
+    Group("my-group").
+    Key("my-key").
+    Data(myData).
+    Save(ctx)
+```
+
+**Include cache tags:**
+
+```go
+err := c.Cache.
+    Set().
+    Key("my-key").
+    Tags("tag1", "tag2").
+    Data(myData).
+    Save(ctx)
+```
+
+**Include an expiration:**
+
+```go
+err := c.Cache.
+    Set().
+    Key("my-key").
+    Expiration(time.Hour * 2).
+    Data(myData).
+    Save(ctx)
+```
+
+### Get data
+
+```go
+data, err := c.Cache.
+    Get().
+    Group("my-group").
+    Key("my-key").
+    Type(myType).
+    Fetch(ctx)
+```
+
+The `Type` method tells the cache what type of data you stored so it can be cast afterwards with: `result, ok := data.(myType)`
+
+### Flush data
+
+```go
+err := c.Cache.
+    Flush().
+    Group("my-group").
+    Key("my-key").
+    Execute(ctx)
+```
+
+### Flush tags
+
+This will flush all cache entries that were tagged with the given tags.
+
+```go
+err := c.Cache.
+    Flush().
+    Tags("tag1", "tag2").
+    Execute(ctx)
+```
+
+## Tasks
+
+Tasks are operations to be executed in the background, either in a queue, at a specfic time, after a given amount of time, or according to a periodic interval (like _cron_). Some examples of tasks could be long-running operations, bulk processing, cleanup, notifications, and so on.
+
+Since we're already using [Redis](https://redis.io) as a _cache_, it's available to act as a message broker as well and handle the processing of queued tasks. [Asynq](https://github.com/hibiken/asynq) is the library chosen to interface with Redis and handle queueing tasks and processing them asynchronously with workers.
+
+To make things even easier, a custom client (`TaskClient`) is provided as a _Service_ on the `Container` which exposes a simple interface with [asynq](https://github.com/hibiken/asynq).
+
+For more detailed information about [asynq](https://github.com/hibiken/asynq) and it's usage, review the [wiki](https://github.com/hibiken/asynq/wiki).
+
+### Queues
+
+All tasks must be placed in to queues in order to be executed by the [worker](#worker). You are not required to specify a queue when creating a task, as it will be placed in the default queue if one is not provided. [Asynq](https://github.com/hibiken/asynq) supports multiple queues which allows for functionality such as [prioritization](https://github.com/hibiken/asynq/wiki/Queue-Priority).
+
+Creating a queued task is easy and at the minimum only requires the name of the task:
+
+```go
+err := c.Tasks.
+    New("my_task").
+    Save()
+```
+
+This will add a task to the _default_ queue with a task _type_ of `my_task`. The type is used to route the task to the correct [worker](#worker).
+
+#### Options
+
+Tasks can be created and queued with various chained options:
+
+```go
+err := c.Tasks.
+    New("my_task").
+    Payload(taskData).
+    Queue("critical").
+    MaxRetries(5).
+    Timeout(30 * time.Second).
+    Wait(5 * time.Second).
+    Retain(2 * time.Hour).
+    Save()
+```
+
+In this example, this task will be:
+- Assigned a task type of `my_task`
+- The task worker will be sent `taskData` as the payload
+- Put in to the `critical` queue
+- Be retried up to 5 times in the event of a failure
+- Timeout after 30 seconds of execution
+- Wait 5 seconds before execution starts
+- Retain the task data in Redis for 2 hours after execution completes
+
+### Scheduled tasks
+
+Tasks can be scheduled to execute at a single point in the future or at a periodic interval. These tasks can also use the options highlighted in the previous section.
+
+**To execute a task once at a specific time:**
+
+```go
+err := c.Tasks.
+    New("my_task").
+    At(time.Date(2022, time.November, 10, 23, 0, 0, 0, time.UTC)).
+    Save()
+```
+
+**To execute a periodic task using a cron schedule:**
+
+```go
+err := c.Tasks.
+    New("my_task").
+    Periodic("*/10 * * * *")
+    Save()
+```
+
+**To execute a periodic task using a simple syntax:**
+
+```go
+err := c.Tasks.
+    New("my_task").
+    Periodic("@every 10m")
+    Save()
+```
+
+#### Scheduler
+
+A service needs to run in order to add periodic tasks to the queue at the specified intervals. When the application is started, this _scheduler_ service will also be started. In `cmd/web/main.go`, this is done with the following code:
+
+```go
+go func() {
+    if err := c.Tasks.StartScheduler(); err != nil {
+        c.Web.Logger.Fatalf("scheduler shutdown: %v", err)
+    }
+}()
+```
+
+In the event of an application restart, periodic tasks must be re-registered with the _scheduler_ in order to continue being queued for execution.
+
+### Worker
+
+The worker is a service that executes the queued tasks using task processors. Included is a basic implementation of a separate worker service that will listen for and execute tasks being added to the queues. If you prefer to move the worker so it runs alongside the web server, you can do that, though it's recommended to keep these processes separate for performance and scalability reasons.
+
+The underlying functionality of the worker service is provided by [asynq](https://github.com/hibiken/asynq), so it's highly recommended that you review the documentation for that project first.
+
+#### Starting the worker
+
+A make target was added to allow you to start the worker service easily. From the root of the repository, execute `make worker`.
+
+#### Understanding the service
+
+The worker service is located in [cmd/worker/main.go](/cmd/worker/main.go) and starts with the creation of a new `*asynq.Server` provided by `asynq.NewServer()`. There are various configuration options available, so be sure to review them all.
+
+Prior to starting the service, we need to route tasks according to their _type_ to their handlers which will process the tasks. This is done by using `async.ServeMux` much like you would use an HTTP router:
+
+```go
+mux := asynq.NewServeMux()
+mux.Handle(tasks.TypeExample, new(tasks.ExampleProcessor))
+```
+
+In this example, all tasks of _type_ `tasks.TypeExample` will be routed to `ExampleProcessor` which is a struct that implements `ProcessTask()`. See the included [basic example](/pkg/tasks/example.go).
+
+Finally, the service is started with `async.Server.Run(mux)`.
+
+### Monitoring
+
+[Asynq](https://github.com/hibiken/asynq) comes with two options to monitor your queues: 1) [Command-line tool](https://github.com/hibiken/asynq#command-line-tool) and 2) [Web UI](https://github.com/hibiken/asynqmon)
 
 ## Static files
 
-Static files are currently configured in the router (`routes/router.go`) to be served from the `static` directory. If you wish to change the directory, alter the constant `config.StaticDir`. The URL prefix for static files is `/files` which is controlled via the `config.StaticPrefix` constant.
+Static files are currently configured in the router (`pkg/routes/router.go`) to be served from the `static` directory. If you wish to change the directory, alter the constant `config.StaticDir`. The URL prefix for static files is `/files` which is controlled via the `config.StaticPrefix` constant.
 
 ### Cache control headers
 
@@ -869,8 +1139,8 @@ The cache max-life is controlled by the configuration at `Config.Cache.Expiratio
 While it's ideal to use cache control headers on your static files so browsers cache the files, you need a way to bust the cache in case the files are changed. In order to do this, a function is provided in the [funcmap](#funcmap) to generate a static file URL for a given file that appends a cache-buster query. This query string is randomly generated and persisted until the application restarts.
 
 For example, to render a file located in `static/picture.png`, you would use:
-```go
-<img src="{{File "picture.png"}"/>
+```html
+<img src="{{File "picture.png"}}"/>
 ```
 
 Which would result in:
@@ -884,7 +1154,36 @@ Where `9fhe73kaf3` is the randomly-generated cache-buster.
 
 An email client was added as a _Service_ to the `Container` but it is just a skeleton without any actual email-sending functionality. The reason is because there are a lot of ways to send email and most prefer using a SaaS solution for that. That makes it difficult to provide a generic solution that will work for most applications.
 
-Two starter methods were added to the `MailClient`, one to send an email via plain-text and one to send via a template by leveraging the [template renderer](#template-renderer). The standard library can be used if you wish to send email via SMTP and most SaaS providers have a Go package that can be used if you choose to go that direction.
+The structure in the client (`MailClient`) makes composing emails very easy and you have the option to construct the body using either a simple string or with a template by leveraging the [template renderer](#template-renderer). The standard library can be used if you wish to send email via SMTP and most SaaS providers have a Go package that can be used if you choose to go that direction. **You must** finish the implementation of `MailClient.send`.
+
+The _from_ address will default to the configuration value at `Config.Mail.FromAddress`. This can be overridden per-email by calling `From()` on the email and passing in the desired address.
+
+See below for examples on how to use the client to compose emails.
+
+**Sending with a string body**:
+
+```go
+err = c.Mail.
+    Compose().
+    To("hello@example.com").
+    Subject("Welcome!").
+    Body("Thank you for registering.").
+    Send(ctx)
+```
+
+**Sending with a template body**:
+
+```go
+err = c.Mail.
+    Compose().
+    To("hello@example.com").
+    Subject("Welcome!").
+    Template("welcome").
+    TemplateData(templateData).
+    Send(ctx)
+```
+
+This will use the template located at `templates/emails/welcome.gohtml` and pass `templateData` to it.
 
 ## HTTPS
 
@@ -901,9 +1200,9 @@ To use _Let's Encrypt_ follow [this guide](https://echo.labstack.com/cookbook/au
 Logging is provided by [Echo](https://echo.labstack.com/guide/customization/#logging) and is accessible within the _Echo_ instance, which is located in the `Web` field of the `Container`, or within any of the _context_ parameters, for example:
 
 ```go
-func (c *Home) Get(ctx echo.Context) error {
+func (c *home) Get(ctx echo.Context) error {
     ctx.Logger().Info("something happened")
-	
+
     if err := someOperation(); err != nil {
         ctx.Logger().Errorf("the operation failed: %v", err)
     }
@@ -920,7 +1219,6 @@ By default, Echo's [request ID middleware](https://echo.labstack.com/middleware/
 
 Future work includes but is not limited to:
 
-- Email verification
 - Flexible pager templates
 - Expanded HTMX examples and integration
 - Admin section
@@ -929,21 +1227,24 @@ Future work includes but is not limited to:
 
 Thank you to all of the following amazing projects for making this possible.
 
-- [go](https://go.dev/)
-- [echo](https://github.com/labstack/echo)
-- [ent](https://github.com/ent/ent)
-- [sprig](https://github.com/Masterminds/sprig)
-- [goquery](https://github.com/PuerkitoBio/goquery)
-- [validator](https://github.com/go-playground/validator)
-- [go-redis](https://github.com/go-redis/redis)
-- [gocache](https://github.com/eko/gocache)
-- [sessions](https://github.com/gorilla/sessions)
-- [pgx](https://github.com/jackc/pgx)
-- [envdecode](https://github.com/joeshaw/envdecode)
-- [testify](https://github.com/stretchr/testify)
-- [htmx](https://github.com/bigskysoftware/htmx)
 - [alpinejs](https://github.com/alpinejs/alpine)
+- [asynq](https://github.com/hibiken/asynq)
 - [bulma](https://github.com/jgthms/bulma)
 - [docker](https://www.docker.com/)
+- [echo](https://github.com/labstack/echo)
+- [echo-contrib](https://github.com/labstack/echo-contrib)
+- [ent](https://github.com/ent/ent)
+- [go](https://go.dev/)
+- [gocache](https://github.com/eko/gocache)
+- [goquery](https://github.com/PuerkitoBio/goquery)
+- [go-redis](https://github.com/go-redis/redis)
+- [htmx](https://github.com/bigskysoftware/htmx)
+- [jwt](https://github.com/golang-jwt/jwt)
+- [pgx](https://github.com/jackc/pgx)
 - [postgresql](https://www.postgresql.org/)
 - [redis](https://redis.io/)
+- [sprig](https://github.com/Masterminds/sprig)
+- [sessions](https://github.com/gorilla/sessions)
+- [testify](https://github.com/stretchr/testify)
+- [validator](https://github.com/go-playground/validator)
+- [viper](https://github.com/spf13/viper)

@@ -2,14 +2,15 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 
-	"github.com/joeshaw/envdecode"
+	"github.com/spf13/viper"
 )
 
 const (
 	// TemplateDir stores the name of the directory that contains templates
-	TemplateDir = "templates"
+	TemplateDir = "../templates"
 
 	// TemplateExt stores the extension used for the template files
 	TemplateExt = ".gohtml"
@@ -21,22 +22,33 @@ const (
 	StaticPrefix = "files"
 )
 
-type Environment string
+type environment string
 
 const (
-	EnvLocal      Environment = "local"
-	EnvTest       Environment = "test"
-	EnvDevelop    Environment = "dev"
-	EnvStaging    Environment = "staging"
-	EnvQA         Environment = "qa"
-	EnvProduction Environment = "prod"
+	// EnvLocal represents the local environment
+	EnvLocal environment = "local"
+
+	// EnvTest represents the test environment
+	EnvTest environment = "test"
+
+	// EnvDevelop represents the development environment
+	EnvDevelop environment = "dev"
+
+	// EnvStaging represents the staging environment
+	EnvStaging environment = "staging"
+
+	// EnvQA represents the qa environment
+	EnvQA environment = "qa"
+
+	// EnvProduction represents the production environment
+	EnvProduction environment = "prod"
 )
 
 // SwitchEnvironment sets the environment variable used to dictate which environment the application is
 // currently running in.
 // This must be called prior to loading the configuration in order for it to take effect.
-func SwitchEnvironment(env Environment) {
-	if err := os.Setenv("APP_ENVIRONMENT", string(env)); err != nil {
+func SwitchEnvironment(env environment) {
+	if err := os.Setenv("PAGODA_APP_ENVIRONMENT", string(env)); err != nil {
 		panic(err)
 	}
 }
@@ -53,64 +65,88 @@ type (
 
 	// HTTPConfig stores HTTP configuration
 	HTTPConfig struct {
-		Hostname     string        `env:"HTTP_HOSTNAME"`
-		Port         uint16        `env:"HTTP_PORT,default=8000"`
-		ReadTimeout  time.Duration `env:"HTTP_READ_TIMEOUT,default=5s"`
-		WriteTimeout time.Duration `env:"HTTP_WRITE_TIMEOUT,default=10s"`
-		IdleTimeout  time.Duration `env:"HTTP_IDLE_TIMEOUT,default=2m"`
+		Hostname     string
+		Port         uint16
+		ReadTimeout  time.Duration
+		WriteTimeout time.Duration
+		IdleTimeout  time.Duration
 		TLS          struct {
-			Enabled     bool   `env:"HTTP_TLS_ENABLED,default=false"`
-			Certificate string `env:"HTTP_TLS_CERTIFICATE"`
-			Key         string `env:"HTTP_TLS_KEY"`
+			Enabled     bool
+			Certificate string
+			Key         string
 		}
 	}
 
 	// AppConfig stores application configuration
 	AppConfig struct {
-		Name          string        `env:"APP_NAME,default=Pagoda"`
-		Environment   Environment   `env:"APP_ENVIRONMENT,default=local"`
-		EncryptionKey string        `env:"APP_ENCRYPTION_KEY,default=?E(G+KbPeShVmYq3t6w9z$C&F)J@McQf"`
-		Timeout       time.Duration `env:"APP_TIMEOUT,default=20s"`
+		Name          string
+		Environment   environment
+		EncryptionKey string
+		Timeout       time.Duration
 		PasswordToken struct {
-			Expiration time.Duration `env:"APP_PASSWORD_TOKEN_EXPIRATION,default=60m"`
-			Length     int           `env:"APP_PASSWORD_TOKEN_LENGTH,default=64"`
+			Expiration time.Duration
+			Length     int
 		}
+		EmailVerificationTokenExpiration time.Duration
 	}
 
 	// CacheConfig stores the cache configuration
 	CacheConfig struct {
-		Hostname   string `env:"CACHE_HOSTNAME,default=localhost"`
-		Port       uint16 `env:"CACHE_PORT,default=6379"`
-		Password   string `env:"CACHE_PASSWORD"`
-		Expiration struct {
-			StaticFile time.Duration `env:"CACHE_EXPIRATION_STATIC_FILE,default=4380h"`
-			Page       time.Duration `env:"CACHE_EXPIRATION_PAGE,default=24h"`
+		Hostname     string
+		Port         uint16
+		Password     string
+		Database     int
+		TestDatabase int
+		Expiration   struct {
+			StaticFile time.Duration
+			Page       time.Duration
 		}
 	}
 
 	// DatabaseConfig stores the database configuration
 	DatabaseConfig struct {
-		Hostname     string `env:"DB_HOSTNAME,default=localhost"`
-		Port         uint16 `env:"DB_PORT,default=5432"`
-		User         string `env:"DB_USER,default=admin"`
-		Password     string `env:"DB_PASSWORD,default=admin"`
-		Database     string `env:"DB_NAME,default=app"`
-		TestDatabase string `env:"DB_NAME_TEST,default=app_test"`
+		Hostname     string
+		Port         uint16
+		User         string
+		Password     string
+		Database     string
+		TestDatabase string
 	}
 
 	// MailConfig stores the mail configuration
 	MailConfig struct {
-		Hostname    string `env:"MAIL_HOSTNAME,default=localhost"`
-		Port        uint16 `env:"MAIL_PORT,default=25"`
-		User        string `env:"MAIL_USER,default=admin"`
-		Password    string `env:"MAIL_PASSWORD,default=admin"`
-		FromAddress string `env:"MAIL_FROM_ADDRESS,default=admin@localhost"`
+		Hostname    string
+		Port        uint16
+		User        string
+		Password    string
+		FromAddress string
 	}
 )
 
 // GetConfig loads and returns configuration
 func GetConfig() (Config, error) {
-	var cfg Config
-	err := envdecode.StrictDecode(&cfg)
-	return cfg, err
+	var c Config
+
+	// Load the config file
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("config")
+	viper.AddConfigPath("../config")
+	viper.AddConfigPath("../../config")
+
+	// Load env variables
+	viper.SetEnvPrefix("pagoda")
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	if err := viper.ReadInConfig(); err != nil {
+		return c, err
+	}
+
+	if err := viper.Unmarshal(&c); err != nil {
+		return c, err
+	}
+
+	return c, nil
 }
